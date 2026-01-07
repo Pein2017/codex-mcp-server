@@ -3,9 +3,20 @@ import {
   type ToolResult,
   type ToolHandlerContext,
   type CodexToolArgs,
+  type CodexSpawnToolArgs,
+  type CodexJobIdArgs,
+  type CodexCancelToolArgs,
+  type CodexEventsToolArgs,
+  type CodexWaitAnyToolArgs,
   type ReviewToolArgs,
   type PingToolArgs,
+  SandboxMode,
   CodexToolSchema,
+  CodexSpawnToolSchema,
+  CodexJobIdSchema,
+  CodexCancelToolSchema,
+  CodexEventsToolSchema,
+  CodexWaitAnyToolSchema,
   ReviewToolSchema,
   PingToolSchema,
   HelpToolSchema,
@@ -19,11 +30,14 @@ import {
 import { ToolExecutionError, ValidationError } from '../errors.js';
 import { executeCommand, executeCommandStreaming } from '../utils/command.js';
 import { ZodError } from 'zod';
+import { CodexJobManager } from '../jobs/job_manager.js';
 
 // Default no-op context for handlers that don't need progress
 const defaultContext: ToolHandlerContext = {
   sendProgress: async () => {},
 };
+
+const jobManager = new CodexJobManager();
 
 export class CodexToolHandler {
   constructor(private sessionStorage: SessionStorage) {}
@@ -39,10 +53,21 @@ export class CodexToolHandler {
         resetSession,
         model,
         reasoningEffort,
-        sandbox,
+        sandbox: requestedSandbox,
         fullAuto,
         workingDirectory,
       }: CodexToolArgs = CodexToolSchema.parse(args);
+
+      // Default sandbox for subagent runs (optional, configured by MCP server env)
+      // - If caller passes `sandbox`, it wins.
+      // - If caller omits `sandbox`, and CODEX_MCP_DEFAULT_SANDBOX is set to a valid mode,
+      //   use it to keep subagent permission consistent without repeating parameters.
+      const envDefaultSandbox = process.env.CODEX_MCP_DEFAULT_SANDBOX;
+      const parsedEnvSandbox = envDefaultSandbox
+        ? SandboxMode.safeParse(envDefaultSandbox)
+        : null;
+      const sandbox =
+        requestedSandbox ?? (parsedEnvSandbox?.success ? parsedEnvSandbox.data : undefined);
 
       let activeSessionId = sessionId;
       let enhancedPrompt = prompt;
@@ -74,8 +99,9 @@ export class CodexToolHandler {
       }
 
       // Build command arguments with v0.75.0+ features
-      const selectedModel =
-        model || process.env.CODEX_DEFAULT_MODEL || 'gpt-5.2-codex'; // Default to gpt-5.2-codex
+      // IMPORTANT: For "inherit config.toml" behavior, only set model when explicitly provided.
+      // Otherwise, let Codex CLI resolve its default model/profile from ~/.codex/config.toml.
+      const selectedModel = model;
 
       let cmdArgs: string[];
 
@@ -84,8 +110,10 @@ export class CodexToolHandler {
         // All exec options (--skip-git-repo-check, -c) must come BEFORE 'resume' subcommand
         cmdArgs = ['exec', '--skip-git-repo-check'];
 
-        // Model must be set via -c config in resume mode (before subcommand)
-        cmdArgs.push('-c', `model="${selectedModel}"`);
+        // Model must be set via -c config in resume mode (before subcommand) if explicitly provided.
+        if (selectedModel) {
+          cmdArgs.push('-c', `model="${selectedModel}"`);
+        }
 
         // Reasoning effort via config (before subcommand)
         if (reasoningEffort) {
@@ -98,8 +126,10 @@ export class CodexToolHandler {
         // Exec mode: supports full set of flags
         cmdArgs = ['exec'];
 
-        // Add model parameter
-        cmdArgs.push('--model', selectedModel);
+        // Add model parameter only when explicitly provided (inherit config.toml otherwise)
+        if (selectedModel) {
+          cmdArgs.push('--model', selectedModel);
+        }
 
         // Add reasoning effort via config parameter (quoted for consistency)
         if (reasoningEffort) {
@@ -112,7 +142,8 @@ export class CodexToolHandler {
         }
 
         // Add full-auto mode (v0.75.0+)
-        if (fullAuto) {
+        // Note: --full-auto implies --sandbox workspace-write, so ignore it when sandbox is explicit.
+        if (fullAuto && !sandbox) {
           cmdArgs.push('--full-auto');
         }
 
@@ -177,7 +208,7 @@ export class CodexToolHandler {
         ],
         _meta: {
           ...(activeSessionId && { sessionId: activeSessionId }),
-          model: selectedModel,
+          ...(selectedModel && { model: selectedModel }),
         },
       };
     } catch (error) {
@@ -215,6 +246,158 @@ export class CodexToolHandler {
 
     // Build enhanced prompt that provides context without conversation format
     return `${contextualInfo}\n\nTask: ${newPrompt}`;
+  }
+}
+
+export class CodexSpawnToolHandler {
+  async execute(
+    args: unknown,
+    context: ToolHandlerContext = defaultContext
+  ): Promise<ToolResult> {
+    try {
+      const parsed: CodexSpawnToolArgs = CodexSpawnToolSchema.parse(args);
+
+      await context.sendProgress('Spawning Codex subagent...', 0);
+
+      const status = jobManager.spawnCodexJob({
+        prompt: parsed.prompt,
+        model: parsed.model,
+        reasoningEffort: parsed.reasoningEffort,
+        sandbox: parsed.sandbox,
+        fullAuto: parsed.fullAuto,
+        workingDirectory: parsed.workingDirectory,
+      });
+
+      await context.sendProgress(`Spawned job ${status.jobId}`, 1);
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify(status, null, 2) }],
+        _meta: { jobId: status.jobId },
+      };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new ValidationError(TOOLS.CODEX_SPAWN, error.message);
+      }
+      throw new ToolExecutionError(
+        TOOLS.CODEX_SPAWN,
+        'Failed to spawn codex job',
+        error
+      );
+    }
+  }
+}
+
+export class CodexStatusToolHandler {
+  async execute(
+    args: unknown,
+    _context: ToolHandlerContext = defaultContext
+  ): Promise<ToolResult> {
+    try {
+      const parsed: CodexJobIdArgs = CodexJobIdSchema.parse(args);
+      const status = jobManager.getStatus(parsed.jobId);
+      return { content: [{ type: 'text', text: JSON.stringify(status, null, 2) }] };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new ValidationError(TOOLS.CODEX_STATUS, error.message);
+      }
+      throw new ToolExecutionError(
+        TOOLS.CODEX_STATUS,
+        'Failed to get codex job status',
+        error
+      );
+    }
+  }
+}
+
+export class CodexResultToolHandler {
+  async execute(
+    args: unknown,
+    _context: ToolHandlerContext = defaultContext
+  ): Promise<ToolResult> {
+    try {
+      const parsed: CodexJobIdArgs = CodexJobIdSchema.parse(args);
+      const result = jobManager.getResult(parsed.jobId);
+      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new ValidationError(TOOLS.CODEX_RESULT, error.message);
+      }
+      throw new ToolExecutionError(
+        TOOLS.CODEX_RESULT,
+        'Failed to get codex job result',
+        error
+      );
+    }
+  }
+}
+
+export class CodexCancelToolHandler {
+  async execute(
+    args: unknown,
+    _context: ToolHandlerContext = defaultContext
+  ): Promise<ToolResult> {
+    try {
+      const parsed: CodexCancelToolArgs = CodexCancelToolSchema.parse(args);
+      const cancelled = jobManager.cancel(parsed.jobId, parsed.force ?? false);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(cancelled, null, 2) }],
+      };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new ValidationError(TOOLS.CODEX_CANCEL, error.message);
+      }
+      throw new ToolExecutionError(
+        TOOLS.CODEX_CANCEL,
+        'Failed to cancel codex job',
+        error
+      );
+    }
+  }
+}
+
+export class CodexEventsToolHandler {
+  async execute(
+    args: unknown,
+    _context: ToolHandlerContext = defaultContext
+  ): Promise<ToolResult> {
+    try {
+      const parsed: CodexEventsToolArgs = CodexEventsToolSchema.parse(args);
+      const maxEvents = parsed.maxEvents ?? 200;
+      const out = jobManager.getEvents(parsed.jobId, parsed.cursor, maxEvents);
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new ValidationError(TOOLS.CODEX_EVENTS, error.message);
+      }
+      throw new ToolExecutionError(
+        TOOLS.CODEX_EVENTS,
+        'Failed to fetch codex job events',
+        error
+      );
+    }
+  }
+}
+
+export class CodexWaitAnyToolHandler {
+  async execute(
+    args: unknown,
+    _context: ToolHandlerContext = defaultContext
+  ): Promise<ToolResult> {
+    try {
+      const parsed: CodexWaitAnyToolArgs = CodexWaitAnyToolSchema.parse(args);
+      const timeoutMs = parsed.timeoutMs ?? 0;
+      const out = await jobManager.waitAny(parsed.jobIds, timeoutMs);
+      return { content: [{ type: 'text', text: JSON.stringify(out, null, 2) }] };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new ValidationError(TOOLS.CODEX_WAIT_ANY, error.message);
+      }
+      throw new ToolExecutionError(
+        TOOLS.CODEX_WAIT_ANY,
+        'Failed to wait for any codex job to complete',
+        error
+      );
+    }
   }
 }
 
@@ -348,10 +531,10 @@ export class ReviewToolHandler {
       // Skip git repo check (required for running outside trusted directories)
       cmdArgs.push('--skip-git-repo-check');
 
-      // Add model parameter (use default if not specified, must be before subcommand)
-      const selectedModel =
-        model || process.env.CODEX_DEFAULT_MODEL || 'gpt-5.2-codex';
-      cmdArgs.push('-c', `model="${selectedModel}"`);
+      // Add model parameter only when explicitly provided (inherit config.toml otherwise)
+      if (model) {
+        cmdArgs.push('-c', `model="${model}"`);
+      }
 
       // Add the review subcommand
       cmdArgs.push('review');
@@ -403,7 +586,7 @@ export class ReviewToolHandler {
           },
         ],
         _meta: {
-          model: selectedModel,
+          ...(model && { model }),
           ...(base && { base }),
           ...(commit && { commit }),
         },
@@ -426,6 +609,12 @@ const sessionStorage = new InMemorySessionStorage();
 
 export const toolHandlers = {
   [TOOLS.CODEX]: new CodexToolHandler(sessionStorage),
+  [TOOLS.CODEX_SPAWN]: new CodexSpawnToolHandler(),
+  [TOOLS.CODEX_STATUS]: new CodexStatusToolHandler(),
+  [TOOLS.CODEX_RESULT]: new CodexResultToolHandler(),
+  [TOOLS.CODEX_CANCEL]: new CodexCancelToolHandler(),
+  [TOOLS.CODEX_EVENTS]: new CodexEventsToolHandler(),
+  [TOOLS.CODEX_WAIT_ANY]: new CodexWaitAnyToolHandler(),
   [TOOLS.REVIEW]: new ReviewToolHandler(),
   [TOOLS.PING]: new PingToolHandler(),
   [TOOLS.HELP]: new HelpToolHandler(),

@@ -24,24 +24,24 @@ export const toolDefinitions: ToolDefinition[] = [
         model: {
           type: 'string',
           description:
-            'Specify which model to use (defaults to gpt-5.2-codex). Options: gpt-5.2-codex, gpt-5.1-codex, gpt-5.1-codex-max, gpt-5-codex, gpt-4o, gpt-4, o3, o4-mini',
+            'Specify which model to use. If omitted, Codex CLI resolves its default (e.g., from ~/.codex/config.toml). Options often include: gpt-5.2-codex, gpt-5.1-codex, gpt-5.1-codex-max, gpt-5-codex, gpt-4o, gpt-4, o3, o4-mini',
         },
         reasoningEffort: {
           type: 'string',
-          enum: ['minimal', 'low', 'medium', 'high'],
+          enum: ['low', 'medium', 'high'],
           description:
-            'Control reasoning depth (minimal < low < medium < high)',
+            'Control reasoning depth (low < medium < high). If omitted, Codex CLI resolves its default (e.g., from ~/.codex/config.toml).',
         },
         sandbox: {
           type: 'string',
           enum: ['read-only', 'workspace-write', 'danger-full-access'],
           description:
-            'Sandbox policy for shell command execution. read-only: no writes allowed, workspace-write: writes only in workspace, danger-full-access: full system access (dangerous)',
+            'Sandbox policy for shell command execution. If omitted, Codex CLI resolves its default unless the MCP server sets CODEX_MCP_DEFAULT_SANDBOX. read-only: no writes allowed, workspace-write: writes only in workspace, danger-full-access: full system access (dangerous)',
         },
         fullAuto: {
           type: 'boolean',
           description:
-            'Enable full-auto mode: sandboxed automatic execution without approval prompts (equivalent to -a on-request --sandbox workspace-write)',
+            'Enable full-auto mode: sandboxed automatic execution without approval prompts (equivalent to -a on-request --sandbox workspace-write). Note: if an explicit sandbox is provided, fullAuto is ignored to avoid overriding the requested sandbox.',
         },
         workingDirectory: {
           type: 'string',
@@ -57,6 +57,161 @@ export const toolDefinitions: ToolDefinition[] = [
       destructiveHint: true,
       idempotentHint: false,
       openWorldHint: true,
+    },
+  },
+  {
+    name: TOOLS.CODEX_SPAWN,
+    description:
+      'Spawn an async Codex subagent job (codex exec --json) and return a jobId immediately',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        prompt: {
+          type: 'string',
+          description: 'The coding task, question, or analysis request',
+        },
+        model: {
+          type: 'string',
+          description:
+            'Optional model override. If omitted, Codex CLI resolves its default from ~/.codex/config.toml',
+        },
+        reasoningEffort: {
+          type: 'string',
+          enum: ['low', 'medium', 'high'],
+          description:
+            'Optional reasoning effort override. If omitted, Codex CLI uses config.toml default.',
+        },
+        sandbox: {
+          type: 'string',
+          enum: ['read-only', 'workspace-write', 'danger-full-access'],
+          description:
+            'Optional sandbox override. If omitted, uses CODEX_MCP_DEFAULT_SANDBOX when set.',
+        },
+        fullAuto: {
+          type: 'boolean',
+          description:
+            'Enable full-auto mode for the spawned job (equivalent to -a on-request --sandbox workspace-write). Ignored if sandbox is explicitly set.',
+        },
+        workingDirectory: {
+          type: 'string',
+          description: 'Working directory for the job (passed via -C flag)',
+        },
+      },
+      required: ['prompt'],
+    },
+    annotations: {
+      title: 'Spawn Codex Subagent',
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+  {
+    name: TOOLS.CODEX_STATUS,
+    description: 'Get status of a spawned Codex subagent job',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'Job identifier returned by codex_spawn' },
+      },
+      required: ['jobId'],
+    },
+    annotations: {
+      title: 'Subagent Status',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: TOOLS.CODEX_RESULT,
+    description: 'Get final/partial result (stdout/stderr tails) for a Codex subagent job',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'Job identifier returned by codex_spawn' },
+      },
+      required: ['jobId'],
+    },
+    annotations: {
+      title: 'Subagent Result',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: TOOLS.CODEX_CANCEL,
+    description: 'Cancel a running Codex subagent job',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'Job identifier returned by codex_spawn' },
+        force: { type: 'boolean', description: 'Force kill (SIGKILL) when supported' },
+      },
+      required: ['jobId'],
+    },
+    annotations: {
+      title: 'Cancel Subagent',
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: TOOLS.CODEX_EVENTS,
+    description: 'Poll normalized streaming events from a Codex subagent job',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'Job identifier returned by codex_spawn' },
+        cursor: {
+          type: 'string',
+          description: 'Opaque cursor returned by previous codex_events call',
+        },
+        maxEvents: {
+          type: 'number',
+          description: 'Max events to return (default 200, max 2000)',
+        },
+      },
+      required: ['jobId'],
+    },
+    annotations: {
+      title: 'Subagent Events',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: TOOLS.CODEX_WAIT_ANY,
+    description: 'Wait until any of the provided Codex subagent jobs completes (optional helper)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobIds: {
+          type: 'array',
+          items: { type: 'string' },
+          description: 'List of job IDs to wait on',
+        },
+        timeoutMs: {
+          type: 'number',
+          description: 'Timeout in milliseconds (default 0 = immediate check)',
+        },
+      },
+      required: ['jobIds'],
+    },
+    annotations: {
+      title: 'Wait Any Subagent',
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -91,7 +246,7 @@ export const toolDefinitions: ToolDefinition[] = [
         model: {
           type: 'string',
           description:
-            'Specify which model to use for the review (defaults to gpt-5.2-codex)',
+            'Specify which model to use for the review. If omitted, Codex CLI resolves its default (e.g., from ~/.codex/config.toml).',
         },
         workingDirectory: {
           type: 'string',

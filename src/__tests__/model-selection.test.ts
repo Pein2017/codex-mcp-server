@@ -48,8 +48,6 @@ describe('Model Selection and Reasoning Effort', () => {
 
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
-      '--model',
-      'gpt-5.2-codex',
       '-c',
       'model_reasoning_effort="high"',
       '--skip-git-repo-check',
@@ -111,20 +109,12 @@ describe('Model Selection and Reasoning Effort', () => {
     ).rejects.toThrow();
   });
 
-  test('should pass minimal reasoning effort to CLI', async () => {
-    await handler.execute({
-      prompt: 'Quick task',
-      reasoningEffort: 'minimal',
-    });
-
-    expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
-      'exec',
-      '--model',
-      'gpt-5.2-codex',
-      '-c',
-      'model_reasoning_effort="minimal"',
-      '--skip-git-repo-check',
-      'Quick task',
-    ]);
+  test('should reject minimal reasoning effort (avoid forcing unsupported values)', async () => {
+    await expect(
+      handler.execute({
+        prompt: 'Quick task',
+        reasoningEffort: 'minimal' as 'low',
+      })
+    ).rejects.toThrow();
   });
 });

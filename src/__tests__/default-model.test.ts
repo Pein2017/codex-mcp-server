@@ -25,22 +25,20 @@ describe('Default Model Configuration', () => {
     });
   });
 
-  test('should use gpt-5.2-codex as default model when no model specified', async () => {
+  test('should not pass --model when no model specified (inherit config.toml)', async () => {
     await handler.execute({ prompt: 'Test prompt' });
 
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
-      '--model',
-      'gpt-5.2-codex',
       '--skip-git-repo-check',
       'Test prompt',
     ]);
   });
 
-  test('should include default model in response metadata', async () => {
+  test('should omit model from response metadata when not explicitly provided', async () => {
     const result = await handler.execute({ prompt: 'Test prompt' });
 
-    expect(result._meta?.model).toBe('gpt-5.2-codex');
+    expect(result._meta?.model).toBeUndefined();
   });
 
   test('should override default model when explicit model provided', async () => {
@@ -68,14 +66,12 @@ describe('Default Model Configuration', () => {
 
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
-      '--model',
-      'gpt-5.2-codex',
       '--skip-git-repo-check',
       'Test prompt',
     ]);
   });
 
-  test('should use default model with resume functionality', async () => {
+  test('should not force model in resume functionality when not explicitly provided', async () => {
     const sessionId = sessionStorage.createSession();
     sessionStorage.setCodexConversationId(sessionId, 'existing-conv-id');
 
@@ -88,15 +84,13 @@ describe('Default Model Configuration', () => {
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
       '--skip-git-repo-check',
-      '-c',
-      'model="gpt-5.2-codex"',
       'resume',
       'existing-conv-id',
       'Resume with default model',
     ]);
   });
 
-  test('should combine default model with reasoning effort', async () => {
+  test('should combine inherited model with reasoning effort', async () => {
     await handler.execute({
       prompt: 'Complex task',
       reasoningEffort: 'high',
@@ -104,8 +98,6 @@ describe('Default Model Configuration', () => {
 
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
-      '--model',
-      'gpt-5.2-codex',
       '-c',
       'model_reasoning_effort="high"',
       '--skip-git-repo-check',
@@ -113,7 +105,7 @@ describe('Default Model Configuration', () => {
     ]);
   });
 
-  test('should use CODEX_DEFAULT_MODEL environment variable when set', async () => {
+  test('should ignore CODEX_DEFAULT_MODEL environment variable by default (inherit config.toml)', async () => {
     const originalEnv = process.env.CODEX_DEFAULT_MODEL;
     process.env.CODEX_DEFAULT_MODEL = 'gpt-4';
 
@@ -122,36 +114,8 @@ describe('Default Model Configuration', () => {
 
       expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
         'exec',
-        '--model',
-        'gpt-4',
         '--skip-git-repo-check',
         'Test with env var',
-      ]);
-    } finally {
-      if (originalEnv) {
-        process.env.CODEX_DEFAULT_MODEL = originalEnv;
-      } else {
-        delete process.env.CODEX_DEFAULT_MODEL;
-      }
-    }
-  });
-
-  test('should prioritize explicit model over environment variable', async () => {
-    const originalEnv = process.env.CODEX_DEFAULT_MODEL;
-    process.env.CODEX_DEFAULT_MODEL = 'gpt-4';
-
-    try {
-      await handler.execute({
-        prompt: 'Test priority',
-        model: 'gpt-3.5-turbo',
-      });
-
-      expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
-        'exec',
-        '--model',
-        'gpt-3.5-turbo',
-        '--skip-git-repo-check',
-        'Test priority',
       ]);
     } finally {
       if (originalEnv) {

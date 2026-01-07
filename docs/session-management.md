@@ -39,7 +39,7 @@ interface ConversationTurn {
 #### Enhanced Codex Tool
 - **sessionId** (optional): Session ID for conversational context
 - **resetSession** (optional): Reset session history before processing
-- **model** (optional): Model selection (defaults to `gpt-5.2-codex`)
+- **model** (optional): Model selection (if omitted, Codex CLI resolves its default, e.g. from `~/.codex/config.toml`)
 - **reasoningEffort** (optional): Control reasoning depth (low/medium/high)
 - **Smart context building**: Uses native resume or fallback context
 - **Robust error handling**: Graceful degradation for various failure modes
@@ -59,7 +59,7 @@ interface ConversationTurn {
 
 2. **Enhanced Codex Tool Handler**
    - Native resume functionality with fallback
-   - GPT-5.2-Codex as intelligent default model
+   - Inherit model defaults from Codex CLI configuration
    - Model and reasoning effort parameter support
    - Comprehensive error handling and validation
 
@@ -75,7 +75,7 @@ interface ConversationTurn {
 
 ## Advanced Benefits
 - **Native Codex Resume**: Optimal conversation continuity using Codex CLI's built-in resume feature
-- **Intelligent Defaults**: GPT-5.2-Codex model selection for superior agentic coding assistance
+- **Intelligent Defaults**: Prefer configuring model defaults in `~/.codex/config.toml` for consistent behavior
 - **Production-Ready**: Comprehensive error handling, data validation, and graceful degradation
 - **Enterprise-Scale**: Session management suitable for professional development workflows
 - **Flexible Configuration**: Per-request model and reasoning effort customization
@@ -95,10 +95,10 @@ codex --sessionId "auth-review" --resetSession true "Start fresh review"
 ### Advanced Configuration
 ```bash
 # Model and reasoning control
-codex --model "gpt-4" --reasoningEffort "high" "Complex architectural analysis"
+codex exec --model "gpt-4" -c 'model_reasoning_effort="high"' --skip-git-repo-check "Complex architectural analysis"
 
-# Session with custom parameters
-codex --sessionId "deep-dive" --model "gpt-4" --reasoningEffort "high" "Advanced optimization review"
+# Session with custom parameters (MCP tool parameters, not Codex CLI flags)
+# Example: call the MCP tool `codex` with {"sessionId":"deep-dive","model":"gpt-4","reasoningEffort":"high","prompt":"Advanced optimization review"}
 
 # Session management
 listSessions  # View all active sessions
@@ -114,14 +114,14 @@ graph TD
     B -->|No| D[Direct Execution]
     C -->|Yes| E[Clear Session History]
     C -->|No| F{Codex Conversation ID exists?}
-    E --> G[Execute with Default Model]
+    E --> G[Execute with CLI Defaults]
     F -->|Yes| H[Use Codex Resume]
     F -->|No| I[Build Enhanced Context]
     H --> J[Execute with Parameters]
     I --> J
     G --> K[Extract Conversation ID]
     J --> L[Save Turn to Session]
-    D --> M[Execute with Default Model]
+    D --> M[Execute with CLI Defaults]
     K --> L
     M --> N[Return Response]
     L --> N

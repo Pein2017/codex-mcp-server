@@ -7,6 +7,12 @@ export const TOOLS = {
   PING: 'ping',
   HELP: 'help',
   LIST_SESSIONS: 'listSessions',
+  CODEX_SPAWN: 'codex_spawn',
+  CODEX_STATUS: 'codex_status',
+  CODEX_RESULT: 'codex_result',
+  CODEX_CANCEL: 'codex_cancel',
+  CODEX_EVENTS: 'codex_events',
+  CODEX_WAIT_ANY: 'codex_wait_any',
 } as const;
 
 export type ToolName = typeof TOOLS[keyof typeof TOOLS];
@@ -54,6 +60,7 @@ export const SandboxMode = z.enum([
   'workspace-write',
   'danger-full-access',
 ]);
+export type SandboxModeValue = z.infer<typeof SandboxMode>;
 
 // Zod schemas for tool arguments
 export const CodexToolSchema = z.object({
@@ -61,10 +68,41 @@ export const CodexToolSchema = z.object({
   sessionId: z.string().optional(),
   resetSession: z.boolean().optional(),
   model: z.string().optional(),
-  reasoningEffort: z.enum(['minimal', 'low', 'medium', 'high']).optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
   sandbox: SandboxMode.optional(),
   fullAuto: z.boolean().optional(),
   workingDirectory: z.string().optional(),
+});
+
+// Async job (subagent) schemas.
+// Note: these are intentionally single-turn. Persistent multi-turn context remains handled by `codex` + sessionId.
+export const CodexSpawnToolSchema = z.object({
+  prompt: z.string(),
+  model: z.string().optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+  sandbox: SandboxMode.optional(),
+  fullAuto: z.boolean().optional(),
+  workingDirectory: z.string().optional(),
+});
+
+export const CodexJobIdSchema = z.object({
+  jobId: z.string(),
+});
+
+export const CodexEventsToolSchema = z.object({
+  jobId: z.string(),
+  cursor: z.string().optional(),
+  maxEvents: z.number().int().positive().max(2000).optional(),
+});
+
+export const CodexCancelToolSchema = z.object({
+  jobId: z.string(),
+  force: z.boolean().optional(),
+});
+
+export const CodexWaitAnyToolSchema = z.object({
+  jobIds: z.array(z.string()).min(1),
+  timeoutMs: z.number().int().nonnegative().max(5 * 60 * 1000).optional(),
 });
 
 // Review tool schema
@@ -90,6 +128,11 @@ export type CodexToolArgs = z.infer<typeof CodexToolSchema>;
 export type ReviewToolArgs = z.infer<typeof ReviewToolSchema>;
 export type PingToolArgs = z.infer<typeof PingToolSchema>;
 export type ListSessionsToolArgs = z.infer<typeof ListSessionsToolSchema>;
+export type CodexSpawnToolArgs = z.infer<typeof CodexSpawnToolSchema>;
+export type CodexJobIdArgs = z.infer<typeof CodexJobIdSchema>;
+export type CodexEventsToolArgs = z.infer<typeof CodexEventsToolSchema>;
+export type CodexCancelToolArgs = z.infer<typeof CodexCancelToolSchema>;
+export type CodexWaitAnyToolArgs = z.infer<typeof CodexWaitAnyToolSchema>;
 
 // Command execution result
 export interface CommandResult {

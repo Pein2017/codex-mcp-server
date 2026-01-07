@@ -47,6 +47,12 @@ All tools include annotations that provide hints to MCP clients about tool behav
 | Tool | `title` | `readOnlyHint` | `destructiveHint` | `idempotentHint` | `openWorldHint` |
 |------|---------|---------------|-------------------|------------------|-----------------|
 | `codex` | Execute Codex CLI | `false` | `true` | `false` | `true` |
+| `codex_spawn` | Spawn Codex Subagent | `false` | `true` | `false` | `true` |
+| `codex_status` | Subagent Status | `true` | `false` | `true` | `false` |
+| `codex_result` | Subagent Result | `true` | `false` | `true` | `false` |
+| `codex_cancel` | Cancel Subagent | `false` | `true` | `false` | `false` |
+| `codex_events` | Subagent Events | `true` | `false` | `false` | `false` |
+| `codex_wait_any` | Wait Any Subagent | `true` | `false` | `false` | `false` |
 | `review` | Code Review | `true` | `false` | `true` | `true` |
 | `ping` | Ping Server | `true` | `false` | `true` | `false` |
 | `help` | Get Help | `true` | `false` | `true` | `false` |
@@ -88,6 +94,30 @@ For long-running operations, the server sends `notifications/progress` messages 
 
 ## Tools
 
+### Async Subagent Jobs (reactive orchestration)
+
+These tools provide an async job API for “subagent” style workflows. They are designed for reactive orchestration:
+
+1) `codex_spawn` to start work and return `jobId` immediately
+2) `codex_events` / `codex_status` polling while other work continues
+3) `codex_result` once complete
+4) `codex_cancel` to stop work early (optional)
+
+Jobs are **in-memory only** (lost if the MCP server restarts).
+
+The server enforces a concurrency cap:
+
+- `CODEX_MCP_MAX_JOBS` (default `32`) limits concurrently running `codex_spawn` jobs
+
+The spawned process always uses `codex exec --json` and the output is normalized into simple event shapes.
+
+#### Normalized event format
+Each event returned by `codex_events` has:
+
+- `type`: `"message" | "progress" | "tool_call" | "tool_result" | "error" | "final"`
+- `content`: tool-specific payload
+- `timestamp`: ISO string
+
 ### `codex` - AI Coding Assistant
 
 Execute Codex CLI with advanced session management and model control.
@@ -101,14 +131,15 @@ Execute Codex CLI with advanced session management and model control.
 | `prompt` | string | ✅ | - | The coding task, question, or analysis request |
 | `sessionId` | string | ❌ | - | Session ID for conversational context |
 | `resetSession` | boolean | ❌ | `false` | Reset session history before processing |
-| `model` | string | ❌ | `gpt-5.2-codex` | Model to use for processing |
+| `model` | string | ❌ | - | Model to use for processing. If omitted, Codex CLI resolves its default (e.g., from `~/.codex/config.toml`). |
 | `reasoningEffort` | enum | ❌ | - | Control reasoning depth |
 | `sandbox` | enum | ❌ | - | Sandbox policy: `read-only`, `workspace-write`, `danger-full-access` |
 | `fullAuto` | boolean | ❌ | `false` | Enable full-auto mode (sandboxed automatic execution) |
 | `workingDirectory` | string | ❌ | - | Working directory for the agent |
 
 #### Model Options
-- `gpt-5.2-codex` (default) - Latest specialized coding model optimized for agentic tasks
+- Resolved by Codex CLI config by default; can be overridden per-call via `model`
+- `gpt-5.2-codex` - Latest specialized coding model optimized for agentic tasks
 - `gpt-5.1-codex` - Previous coding model version
 - `gpt-5.1-codex-max` - Enhanced coding model for complex tasks
 - `gpt-5-codex` - Base GPT-5 coding model
@@ -129,7 +160,7 @@ interface CodexToolResponse {
   }>;
   _meta?: {
     sessionId?: string;
-    model: string;
+    model?: string;
     reasoningEffort?: string;
   };
 }
@@ -172,6 +203,92 @@ interface CodexToolResponse {
 
 ---
 
+### `codex_spawn` - Spawn Subagent Job
+
+Spawn a new Codex `exec` run asynchronously and return a `jobId` immediately.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `prompt` | string | ✅ | - | Task prompt for the subagent |
+| `model` | string | ❌ | - | Model override (defaults from `~/.codex/config.toml`) |
+| `reasoningEffort` | enum | ❌ | - | `low` \| `medium` \| `high` |
+| `sandbox` | enum | ❌ | - | `read-only` \| `workspace-write` \| `danger-full-access` (or server default) |
+| `fullAuto` | boolean | ❌ | `false` | Enables `--full-auto` when sandbox is not explicitly set |
+| `workingDirectory` | string | ❌ | - | Working directory (passed via `-C`) |
+
+#### Example
+```json
+{ "prompt": "List all TODOs in this repository", "sandbox": "read-only" }
+```
+
+---
+
+### `codex_status` - Job Status
+
+Get the current status for a `jobId`.
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `jobId` | string | ✅ | Job identifier returned by `codex_spawn` |
+
+---
+
+### `codex_result` - Job Result
+
+Get the job status plus the last agent message and stdout/stderr tails.
+
+#### Parameters
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `jobId` | string | ✅ | Job identifier returned by `codex_spawn` |
+
+---
+
+### `codex_cancel` - Cancel Job
+
+Cancel a running job.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `jobId` | string | ✅ | - | Job identifier returned by `codex_spawn` |
+| `force` | boolean | ❌ | `false` | Force kill when supported |
+
+---
+
+### `codex_events` - Poll Events
+
+Poll normalized events. Use the returned `nextCursor` to continue.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `jobId` | string | ✅ | - | Job identifier returned by `codex_spawn` |
+| `cursor` | string | ❌ | `"0"` | Cursor for incremental reads |
+| `maxEvents` | number | ❌ | `200` | Max events to return (max 2000) |
+
+---
+
+### `codex_wait_any` - Wait Any (optional)
+
+Wait until any job in `jobIds` completes. Useful to avoid busy polling.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `jobIds` | string[] | ✅ | - | Job IDs to wait on |
+| `timeoutMs` | number | ❌ | `0` | Wait timeout in milliseconds |
+
+---
+
 ### `review` - Code Review
 
 Run AI-powered code reviews against your repository using Codex CLI.
@@ -187,7 +304,7 @@ Run AI-powered code reviews against your repository using Codex CLI.
 | `base` | string | ❌ | - | Review changes against a specific base branch |
 | `commit` | string | ❌ | - | Review changes introduced by a specific commit SHA |
 | `title` | string | ❌ | - | Title to display in the review summary |
-| `model` | string | ❌ | `gpt-5.2-codex` | Model to use for the review |
+| `model` | string | ❌ | - | Model to use for the review. If omitted, Codex CLI resolves its default (e.g., from `~/.codex/config.toml`). |
 | `workingDirectory` | string | ❌ | - | Working directory containing the repository |
 
 #### Examples
@@ -386,7 +503,7 @@ interface ErrorResponse {
 - **Context Optimization**: Recent turns only (last 2) for fallback context
 
 ### Response Optimization
-- **Model Selection**: Default `gpt-5.2-codex` optimized for agentic coding
+- **Model Selection**: Prefer configuring defaults in `~/.codex/config.toml` for consistent behavior across subagents
 - **Reasoning Control**: Adjust effort based on task complexity
 - **Native Resume**: Preferred over manual context building
 

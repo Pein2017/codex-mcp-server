@@ -71,10 +71,10 @@ This MCP server is optimized for **codex CLI v0.75.0 or later** for full feature
 - **MCP Parameter**: `workingDirectory` parameter in both codex and review tools
 
 ### 5. Model Selection
-- **Default Model**: `gpt-5.2-codex` (optimal for agentic coding tasks)
+- **Default Model**: Resolved by Codex CLI (e.g., from `~/.codex/config.toml`)
 - **CLI Flag**: `--model <model-name>`
 - **Supported Models**:
-  - `gpt-5.2-codex` (default, specialized for agentic coding)
+  - `gpt-5.2-codex` (specialized for agentic coding)
   - `gpt-5.1-codex` (previous coding model)
   - `gpt-5.1-codex-max` (enhanced coding)
   - `gpt-5-codex` (base GPT-5 coding)
@@ -86,7 +86,7 @@ This MCP server is optimized for **codex CLI v0.75.0 or later** for full feature
 
 ### 6. Reasoning Effort Control
 - **CLI Flag**: `-c model_reasoning_effort="<level>"`
-- **Levels**: `minimal`, `low`, `medium`, `high`
+- **Levels**: `low`, `medium`, `high`
 - **MCP Parameter**: `reasoningEffort` parameter in codex tool
 - **Note**: The standalone `--reasoning-effort` flag was removed in v0.50.0, now uses quoted config values for consistency
 
@@ -248,7 +248,7 @@ if (conversationIdMatch) {
 ## Performance Optimizations
 
 ### Smart Model Selection
-- **Default to gpt-5.2-codex**: Optimal for agentic coding without configuration
+- **Rely on Codex CLI defaults**: Keep model/profile selection in `~/.codex/config.toml` for consistent behavior across runs
 - **Context-Aware Suggestions**: Better model recommendations based on task type
 - **Consistent Experience**: Same model across session interactions
 
@@ -296,8 +296,8 @@ if (conversationIdMatch) {
    - Verify: Check `CODEX_HOME/auth.json` exists
 
 2. **Model Not Available**
-   - Solution: Use default `gpt-5.2-codex` or try alternative models
-   - Check: Codex CLI documentation for available models
+   - Solution: Use the model configured in `~/.codex/config.toml`, or try alternative models via `--model`
+   - Check: Codex CLI `--help` output for available model options in this environment
 
 3. **Resume Functionality Not Working**
    - Solution: System falls back to manual context building
