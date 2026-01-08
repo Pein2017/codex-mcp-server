@@ -5,6 +5,7 @@ import {
   type CodexToolArgs,
   type CodexSpawnToolArgs,
   type CodexJobIdArgs,
+  type CodexResultToolArgs,
   type CodexCancelToolArgs,
   type CodexEventsToolArgs,
   type CodexWaitAnyToolArgs,
@@ -14,6 +15,7 @@ import {
   CodexToolSchema,
   CodexSpawnToolSchema,
   CodexJobIdSchema,
+  CodexResultToolSchema,
   CodexCancelToolSchema,
   CodexEventsToolSchema,
   CodexWaitAnyToolSchema,
@@ -315,8 +317,13 @@ export class CodexResultToolHandler {
     _context: ToolHandlerContext = defaultContext
   ): Promise<ToolResult> {
     try {
-      const parsed: CodexJobIdArgs = CodexJobIdSchema.parse(args);
+      const parsed: CodexResultToolArgs = CodexResultToolSchema.parse(args);
       const result = jobManager.getResult(parsed.jobId);
+
+      if (parsed.view === 'finalMessage') {
+        return { content: [{ type: 'text', text: result.finalMessage ?? '' }] };
+      }
+
       return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
     } catch (error) {
       if (error instanceof ZodError) {

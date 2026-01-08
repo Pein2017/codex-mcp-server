@@ -89,6 +89,11 @@ export const CodexJobIdSchema = z.object({
   jobId: z.string(),
 });
 
+export const CodexResultToolSchema = z.object({
+  jobId: z.string(),
+  view: z.enum(['full', 'finalMessage']).optional(),
+});
+
 export const CodexEventsToolSchema = z.object({
   jobId: z.string(),
   cursor: z.string().optional(),
@@ -130,6 +135,7 @@ export type PingToolArgs = z.infer<typeof PingToolSchema>;
 export type ListSessionsToolArgs = z.infer<typeof ListSessionsToolSchema>;
 export type CodexSpawnToolArgs = z.infer<typeof CodexSpawnToolSchema>;
 export type CodexJobIdArgs = z.infer<typeof CodexJobIdSchema>;
+export type CodexResultToolArgs = z.infer<typeof CodexResultToolSchema>;
 export type CodexEventsToolArgs = z.infer<typeof CodexEventsToolSchema>;
 export type CodexCancelToolArgs = z.infer<typeof CodexCancelToolSchema>;
 export type CodexWaitAnyToolArgs = z.infer<typeof CodexWaitAnyToolSchema>;

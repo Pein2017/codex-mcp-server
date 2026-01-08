@@ -20,6 +20,7 @@ import {
   CodexStatusToolHandler,
   CodexResultToolHandler,
   CodexEventsToolHandler,
+  CodexWaitAnyToolHandler,
 } from '../tools/handlers.js';
 
 function makeMockChildProcess() {
@@ -43,6 +44,7 @@ describe('Async subagent jobs', () => {
     const statusHandler = new CodexStatusToolHandler();
     const resultHandler = new CodexResultToolHandler();
     const eventsHandler = new CodexEventsToolHandler();
+    const waitAnyHandler = new CodexWaitAnyToolHandler();
 
     const spawnRes = await spawnHandler.execute({
       prompt: 'Say hello',
@@ -57,6 +59,12 @@ describe('Async subagent jobs', () => {
       (await statusHandler.execute({ jobId: status0.jobId })).content[0].text
     ) as { status: string };
     expect(statusRunning.status).toBe('running');
+
+    const wait0 = JSON.parse(
+      (await waitAnyHandler.execute({ jobIds: [status0.jobId], timeoutMs: 0 })).content[0].text
+    ) as { completedJobId: string | null; timedOut: boolean };
+    expect(wait0.completedJobId).toBeNull();
+    expect(wait0.timedOut).toBe(true);
 
     // Emit a codex JSONL agent message event (stdout).
     child.stdout.emit(
@@ -78,6 +86,12 @@ describe('Async subagent jobs', () => {
     expect(result.status).toBe('done');
     expect(result.finalMessage).toBe('hello from subagent');
 
+    const finalMessageOnly = (await resultHandler.execute({
+      jobId: status0.jobId,
+      view: 'finalMessage',
+    })).content[0].text;
+    expect(finalMessageOnly).toBe('hello from subagent');
+
     const events = JSON.parse(
       (await eventsHandler.execute({ jobId: status0.jobId, cursor: '0', maxEvents: 50 }))
         .content[0].text
@@ -86,4 +100,3 @@ describe('Async subagent jobs', () => {
     expect(events.events.map((e) => e.type)).toContain('final');
   });
 });
-

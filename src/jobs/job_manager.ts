@@ -19,6 +19,12 @@ export interface NormalizedEvent {
   timestamp: string;
 }
 
+export interface CodexWaitAnyResult {
+  completedJobId: string | null;
+  timedOut: boolean;
+  missingJobIds?: string[];
+}
+
 export interface CodexSpawnJobArgs {
   prompt: string;
   model?: string;
@@ -397,15 +403,38 @@ export class CodexJobManager {
     };
   }
 
-  async waitAny(jobIds: string[], timeoutMs: number): Promise<{ completedJobId?: string }> {
-    const immediate = jobIds.find((id) => {
+  async waitAny(jobIds: string[], timeoutMs: number): Promise<CodexWaitAnyResult> {
+    const missingJobIds = jobIds.filter((id) => !this.jobs.has(id));
+    const knownJobIds = jobIds.filter((id) => this.jobs.has(id));
+
+    if (knownJobIds.length === 0) {
+      return {
+        completedJobId: null,
+        timedOut: false,
+        ...(missingJobIds.length > 0 ? { missingJobIds } : {}),
+      };
+    }
+
+    const immediate = knownJobIds.find((id) => {
       const job = this.jobs.get(id);
       return job && job.status !== 'running';
     });
-    if (immediate) return { completedJobId: immediate };
+    if (immediate) {
+      return {
+        completedJobId: immediate,
+        timedOut: false,
+        ...(missingJobIds.length > 0 ? { missingJobIds } : {}),
+      };
+    }
 
-    const jobs = jobIds.map((id) => this.jobs.get(id)).filter(Boolean) as JobRecord[];
-    if (jobs.length === 0) return { completedJobId: undefined };
+    const jobs = knownJobIds.map((id) => this.jobs.get(id)).filter(Boolean) as JobRecord[];
+    if (jobs.length === 0) {
+      return {
+        completedJobId: null,
+        timedOut: false,
+        ...(missingJobIds.length > 0 ? { missingJobIds } : {}),
+      };
+    }
 
     const timeout = new Promise<null>((resolve) => {
       setTimeout(() => resolve(null), Math.max(0, timeoutMs));
@@ -419,8 +448,19 @@ export class CodexJobManager {
       timeout,
     ]);
 
-    if (typeof winner === 'string') return { completedJobId: winner };
-    return { completedJobId: undefined };
+    if (typeof winner === 'string') {
+      return {
+        completedJobId: winner,
+        timedOut: false,
+        ...(missingJobIds.length > 0 ? { missingJobIds } : {}),
+      };
+    }
+
+    return {
+      completedJobId: null,
+      timedOut: true,
+      ...(missingJobIds.length > 0 ? { missingJobIds } : {}),
+    };
   }
 
   private consumeStdoutJsonl(jobId: string, chunk: string): void {

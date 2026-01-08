@@ -127,11 +127,18 @@ export const toolDefinitions: ToolDefinition[] = [
   },
   {
     name: TOOLS.CODEX_RESULT,
-    description: 'Get final/partial result (stdout/stderr tails) for a Codex subagent job',
+    description:
+      'Get final/partial result for a Codex subagent job. Use view=finalMessage to return only the final agent message (recommended for long outputs).',
     inputSchema: {
       type: 'object',
       properties: {
         jobId: { type: 'string', description: 'Job identifier returned by codex_spawn' },
+        view: {
+          type: 'string',
+          enum: ['full', 'finalMessage'],
+          description:
+            'Result view. full returns status + tails; finalMessage returns only the final agent message as plain text.',
+        },
       },
       required: ['jobId'],
     },
