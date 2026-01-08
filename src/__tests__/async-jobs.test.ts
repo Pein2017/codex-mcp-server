@@ -80,17 +80,15 @@ describe('Async subagent jobs', () => {
     // Finish the process.
     child.emit('close', 0);
 
-    const result = JSON.parse(
-      (await resultHandler.execute({ jobId: status0.jobId })).content[0].text
-    ) as { status: string; finalMessage?: string };
-    expect(result.status).toBe('done');
-    expect(result.finalMessage).toBe('hello from subagent');
+    const defaultFinalMessage = (await resultHandler.execute({ jobId: status0.jobId }))
+      .content[0].text;
+    expect(defaultFinalMessage).toBe('hello from subagent');
 
-    const finalMessageOnly = (await resultHandler.execute({
-      jobId: status0.jobId,
-      view: 'finalMessage',
-    })).content[0].text;
-    expect(finalMessageOnly).toBe('hello from subagent');
+    const fullResult = JSON.parse(
+      (await resultHandler.execute({ jobId: status0.jobId, view: 'full' })).content[0].text
+    ) as { status: string; finalMessage?: string };
+    expect(fullResult.status).toBe('done');
+    expect(fullResult.finalMessage).toBe('hello from subagent');
 
     const events = JSON.parse(
       (await eventsHandler.execute({ jobId: status0.jobId, cursor: '0', maxEvents: 50 }))

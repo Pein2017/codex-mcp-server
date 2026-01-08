@@ -320,11 +320,13 @@ export class CodexResultToolHandler {
       const parsed: CodexResultToolArgs = CodexResultToolSchema.parse(args);
       const result = jobManager.getResult(parsed.jobId);
 
-      if (parsed.view === 'finalMessage') {
-        return { content: [{ type: 'text', text: result.finalMessage ?? '' }] };
+      // Default behavior: return only the final agent message as plain text.
+      // This is what most orchestrators want, and avoids noisy process metadata.
+      if (parsed.view === 'full') {
+        return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
-      return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+      return { content: [{ type: 'text', text: result.finalMessage ?? '' }] };
     } catch (error) {
       if (error instanceof ZodError) {
         throw new ValidationError(TOOLS.CODEX_RESULT, error.message);
