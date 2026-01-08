@@ -133,6 +133,8 @@ describe('Error Handling Scenarios', () => {
     expect(result.content[0].text).toBe('Response');
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       longPrompt,
     ]);

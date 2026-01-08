@@ -35,6 +35,8 @@ describe('Codex Resume Functionality', () => {
 
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       'First message',
     ]);
@@ -102,6 +104,8 @@ describe('Codex Resume Functionality', () => {
     // Should use exec (not resume) and get new session ID
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       'Reset and start new',
     ]);

@@ -35,6 +35,8 @@ describe('Model Selection and Reasoning Effort', () => {
       'exec',
       '--model',
       'gpt-4',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       'Test prompt',
     ]);
@@ -50,6 +52,8 @@ describe('Model Selection and Reasoning Effort', () => {
       'exec',
       '-c',
       'model_reasoning_effort="high"',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       'Complex analysis',
     ]);
@@ -68,6 +72,8 @@ describe('Model Selection and Reasoning Effort', () => {
       'gpt-4',
       '-c',
       'model_reasoning_effort="medium"',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       'Advanced task',
     ]);

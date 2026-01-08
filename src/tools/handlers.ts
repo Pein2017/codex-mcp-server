@@ -60,16 +60,18 @@ export class CodexToolHandler {
         workingDirectory,
       }: CodexToolArgs = CodexToolSchema.parse(args);
 
-      // Default sandbox for subagent runs (optional, configured by MCP server env)
+      // Sandbox selection (shared default)
       // - If caller passes `sandbox`, it wins.
-      // - If caller omits `sandbox`, and CODEX_MCP_DEFAULT_SANDBOX is set to a valid mode,
-      //   use it to keep subagent permission consistent without repeating parameters.
+      // - Else, if CODEX_MCP_DEFAULT_SANDBOX is set to a valid mode, use it.
+      // - Else, default to `workspace-write` (unless fullAuto is requested, in which case
+      //   we rely on `--full-auto` which already implies `workspace-write`).
       const envDefaultSandbox = process.env.CODEX_MCP_DEFAULT_SANDBOX;
       const parsedEnvSandbox = envDefaultSandbox
         ? SandboxMode.safeParse(envDefaultSandbox)
         : null;
+      const sandboxFromEnv = parsedEnvSandbox?.success ? parsedEnvSandbox.data : undefined;
       const sandbox =
-        requestedSandbox ?? (parsedEnvSandbox?.success ? parsedEnvSandbox.data : undefined);
+        requestedSandbox ?? sandboxFromEnv ?? (fullAuto ? undefined : 'workspace-write');
 
       let activeSessionId = sessionId;
       let enhancedPrompt = prompt;

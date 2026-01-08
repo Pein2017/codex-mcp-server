@@ -239,8 +239,9 @@ export class CodexJobManager {
 
     const envDefaultSandbox = process.env.CODEX_MCP_DEFAULT_SANDBOX;
     const parsedEnvSandbox = envDefaultSandbox ? SandboxMode.safeParse(envDefaultSandbox) : null;
+    const sandboxFromEnv = parsedEnvSandbox?.success ? parsedEnvSandbox.data : undefined;
     const effectiveSandbox =
-      args.sandbox ?? (parsedEnvSandbox?.success ? parsedEnvSandbox.data : undefined);
+      args.sandbox ?? sandboxFromEnv ?? (args.fullAuto ? undefined : 'workspace-write');
 
     const cmdArgs: string[] = ['exec', '--json'];
 

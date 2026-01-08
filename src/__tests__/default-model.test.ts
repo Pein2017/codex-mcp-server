@@ -30,6 +30,8 @@ describe('Default Model Configuration', () => {
 
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       'Test prompt',
     ]);
@@ -51,6 +53,8 @@ describe('Default Model Configuration', () => {
       'exec',
       '--model',
       'gpt-4',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       'Test prompt',
     ]);
@@ -66,6 +70,8 @@ describe('Default Model Configuration', () => {
 
     expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
       'exec',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       'Test prompt',
     ]);
@@ -100,6 +106,8 @@ describe('Default Model Configuration', () => {
       'exec',
       '-c',
       'model_reasoning_effort="high"',
+      '--sandbox',
+      'workspace-write',
       '--skip-git-repo-check',
       'Complex task',
     ]);
@@ -114,6 +122,8 @@ describe('Default Model Configuration', () => {
 
       expect(mockedExecuteCommand).toHaveBeenCalledWith('codex', [
         'exec',
+        '--sandbox',
+        'workspace-write',
         '--skip-git-repo-check',
         'Test with env var',
       ]);
