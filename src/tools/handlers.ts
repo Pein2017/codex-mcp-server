@@ -32,7 +32,7 @@ import {
 import { ToolExecutionError, ValidationError } from '../errors.js';
 import { executeCommand, executeCommandStreaming } from '../utils/command.js';
 import { ZodError } from 'zod';
-import { CodexJobManager } from '../jobs/job_manager.js';
+import { CodexJobManager, type CodexJobResult } from '../jobs/job_manager.js';
 
 // Default no-op context for handlers that don't need progress
 const defaultContext: ToolHandlerContext = {
@@ -40,6 +40,50 @@ const defaultContext: ToolHandlerContext = {
 };
 
 const jobManager = new CodexJobManager();
+
+function formatMissingFinalMessage(result: CodexJobResult): string {
+  const exit =
+    result.exitCode === undefined ? '' : `\nexitCode: ${String(result.exitCode)}`;
+
+  switch (result.status) {
+    case 'canceled':
+      return (
+        'Summary:\n' +
+        '- Job was canceled before producing a final assistant message.\n' +
+        '- No modifiedFiles were reported.\n' +
+        '\n' +
+        'modifiedFiles:\n' +
+        '\n' +
+        `status: canceled${exit}\n` +
+        '\n' +
+        'Tip: If you want a non-empty message on cancellation, require delegated jobs to emit a short acknowledgement message before long-running tool calls.'
+      );
+    case 'failed':
+      return (
+        'Summary:\n' +
+        '- Job failed before producing a final assistant message.\n' +
+        '- No modifiedFiles were reported.\n' +
+        '\n' +
+        'modifiedFiles:\n' +
+        '\n' +
+        `status: failed${exit}\n` +
+        '\n' +
+        'Tip: Use codex_result(view="full") for stderrTail, or poll codex_events for progress leading up to the failure.'
+      );
+    case 'done':
+      return (
+        'Summary:\n' +
+        '- Job completed but produced no final assistant message.\n' +
+        '- No modifiedFiles were reported.\n' +
+        '\n' +
+        'modifiedFiles:\n' +
+        '\n' +
+        `status: done${exit}`
+      );
+    case 'running':
+      return '';
+  }
+}
 
 export class CodexToolHandler {
   constructor(private sessionStorage: SessionStorage) {}
@@ -328,7 +372,21 @@ export class CodexResultToolHandler {
         return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
       }
 
-      return { content: [{ type: 'text', text: result.finalMessage ?? '' }] };
+      const message = result.finalMessage;
+      if (typeof message === 'string' && message.trim().length > 0) {
+        return { content: [{ type: 'text', text: message }] };
+      }
+
+      // Cancellation/termination can legitimately happen before any agent_message event.
+      // In that case, return a small, structured fallback rather than an empty string.
+      if (result.status !== 'running') {
+        const fallback = formatMissingFinalMessage(result);
+        if (fallback.trim().length > 0) {
+          return { content: [{ type: 'text', text: fallback }] };
+        }
+      }
+
+      return { content: [{ type: 'text', text: '' }] };
     } catch (error) {
       if (error instanceof ZodError) {
         throw new ValidationError(TOOLS.CODEX_RESULT, error.message);

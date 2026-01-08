@@ -186,6 +186,13 @@ describe('Async subagent jobs', () => {
         (await statusHandler.execute({ jobId: jobB.jobId })).content[0].text
       ) as { status: string };
       expect(statusB.status).toBe('canceled');
+
+      // If a job is canceled before emitting any agent_message event, finalMessage-only should
+      // still return a helpful fallback rather than an empty string.
+      const canceledMessage = (await resultHandler.execute({ jobId: jobB.jobId })).content[0]
+        .text;
+      expect(canceledMessage.trim().length).toBeGreaterThan(0);
+      expect(canceledMessage.toLowerCase()).toContain('canceled');
     } finally {
       if (previousDefaultSandbox !== undefined) {
         process.env.CODEX_MCP_DEFAULT_SANDBOX = previousDefaultSandbox;
