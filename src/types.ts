@@ -8,11 +8,13 @@ export const TOOLS = {
   HELP: 'help',
   LIST_SESSIONS: 'listSessions',
   CODEX_SPAWN: 'codex_spawn',
+  CODEX_SPAWN_GROUP: 'codex_spawn_group',
   CODEX_STATUS: 'codex_status',
   CODEX_RESULT: 'codex_result',
   CODEX_CANCEL: 'codex_cancel',
   CODEX_EVENTS: 'codex_events',
   CODEX_WAIT_ANY: 'codex_wait_any',
+  CODEX_INTERRUPT: 'codex_interrupt',
 } as const;
 
 export type ToolName = typeof TOOLS[keyof typeof TOOLS];
@@ -110,6 +112,49 @@ export const CodexWaitAnyToolSchema = z.object({
   timeoutMs: z.number().int().nonnegative().max(5 * 60 * 1000).optional(),
 });
 
+// Convenience wrappers (server-only).
+export const CodexSpawnGroupDefaultsSchema = z.object({
+  model: z.string().optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+  sandbox: SandboxMode.optional(),
+  fullAuto: z.boolean().optional(),
+  workingDirectory: z.string().optional(),
+});
+
+export const CodexSpawnGroupJobSchema = z.object({
+  prompt: z.string(),
+  model: z.string().optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+  sandbox: SandboxMode.optional(),
+  fullAuto: z.boolean().optional(),
+  workingDirectory: z.string().optional(),
+  label: z.string().optional(),
+});
+
+export const CodexSpawnGroupToolSchema = z.object({
+  defaults: CodexSpawnGroupDefaultsSchema.optional(),
+  jobs: z.array(CodexSpawnGroupJobSchema).min(1),
+  includeHandshake: z.boolean().optional(),
+  handshakeMaxEvents: z.number().int().positive().max(2000).optional(),
+});
+
+export const CodexInterruptOverridesSchema = z.object({
+  model: z.string().optional(),
+  reasoningEffort: z.enum(['low', 'medium', 'high']).optional(),
+  sandbox: SandboxMode.optional(),
+  fullAuto: z.boolean().optional(),
+  workingDirectory: z.string().optional(),
+});
+
+export const CodexInterruptToolSchema = z.object({
+  jobId: z.string(),
+  newPrompt: z.string(),
+  waitMs: z.number().int().nonnegative().max(60 * 1000).optional(),
+  includeEventTail: z.boolean().optional(),
+  tailMaxEvents: z.number().int().positive().max(2000).optional(),
+  overrides: CodexInterruptOverridesSchema.optional(),
+});
+
 // Review tool schema
 export const ReviewToolSchema = z.object({
   prompt: z.string().optional(),
@@ -134,11 +179,13 @@ export type ReviewToolArgs = z.infer<typeof ReviewToolSchema>;
 export type PingToolArgs = z.infer<typeof PingToolSchema>;
 export type ListSessionsToolArgs = z.infer<typeof ListSessionsToolSchema>;
 export type CodexSpawnToolArgs = z.infer<typeof CodexSpawnToolSchema>;
+export type CodexSpawnGroupToolArgs = z.infer<typeof CodexSpawnGroupToolSchema>;
 export type CodexJobIdArgs = z.infer<typeof CodexJobIdSchema>;
 export type CodexResultToolArgs = z.infer<typeof CodexResultToolSchema>;
 export type CodexEventsToolArgs = z.infer<typeof CodexEventsToolSchema>;
 export type CodexCancelToolArgs = z.infer<typeof CodexCancelToolSchema>;
 export type CodexWaitAnyToolArgs = z.infer<typeof CodexWaitAnyToolSchema>;
+export type CodexInterruptToolArgs = z.infer<typeof CodexInterruptToolSchema>;
 
 // Command execution result
 export interface CommandResult {

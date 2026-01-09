@@ -48,11 +48,13 @@ All tools include annotations that provide hints to MCP clients about tool behav
 |------|---------|---------------|-------------------|------------------|-----------------|
 | `codex` | Execute Codex CLI | `false` | `true` | `false` | `true` |
 | `codex_spawn` | Spawn Codex Subagent | `false` | `true` | `false` | `true` |
+| `codex_spawn_group` | Spawn Group Subagents | `false` | `true` | `false` | `true` |
 | `codex_status` | Subagent Status | `true` | `false` | `true` | `false` |
 | `codex_result` | Subagent Result | `true` | `false` | `true` | `false` |
 | `codex_cancel` | Cancel Subagent | `false` | `true` | `false` | `false` |
 | `codex_events` | Subagent Events | `true` | `false` | `false` | `false` |
 | `codex_wait_any` | Wait Any Subagent | `true` | `false` | `false` | `false` |
+| `codex_interrupt` | Interrupt Subagent | `false` | `true` | `false` | `true` |
 | `review` | Code Review | `true` | `false` | `true` | `true` |
 | `ping` | Ping Server | `true` | `false` | `true` | `false` |
 | `help` | Get Help | `true` | `false` | `true` | `false` |
@@ -88,7 +90,8 @@ For long-running operations, the server sends `notifications/progress` messages 
 }
 ```
 
-**Supported Tools:** `codex`, `review` (long-running operations)
+**Supported Tools:** tools may emit progress notifications when the client provides a `progressToken`.
+The most common long-running emitters are `codex` and `review`, but subagent tools like `codex_spawn_group` and `codex_interrupt` may also emit short progress updates.
 
 > **Note:** Progress notifications are streamed in real-time from CLI stdout/stderr. Client support for displaying these notifications varies.
 
@@ -110,6 +113,12 @@ The server enforces a concurrency cap:
 - `CODEX_MCP_MAX_JOBS` (default `32`) limits concurrently running `codex_spawn` jobs
 
 The spawned process always uses `codex exec --json` and the output is normalized into simple event shapes.
+
+#### Convenience wrappers (optional)
+On top of the job primitives, the server also provides two deterministic wrappers:
+
+1) `codex_spawn_group` — spawn N jobs in one call (partial success per entry; no orchestration logic)
+2) `codex_interrupt` — cancel + bounded wait + respawn (with bounded event-tail prompt injection)
 
 #### Normalized event format
 Each event returned by `codex_events` has:
@@ -225,6 +234,36 @@ Spawn a new Codex `exec` run asynchronously and return a `jobId` immediately.
 
 ---
 
+### `codex_spawn_group` - Spawn Multiple Subagent Jobs
+
+Spawn multiple Codex `exec` runs asynchronously in one call. This is a deterministic wrapper over multiple `codex_spawn` calls (no scheduling, retries, or synthesis).
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `defaults` | object | ❌ | - | Optional shared defaults applied only when a per-job field is omitted |
+| `jobs` | array | ✅ | - | List of job spawn requests (each requires `prompt`) |
+| `includeHandshake` | boolean | ❌ | `false` | If true, include an initial events page per successfully spawned job |
+| `handshakeMaxEvents` | number | ❌ | `25` | Max events returned per job handshake (hard-capped at `25`) |
+
+Each job entry supports the same fields as `codex_spawn`, plus an optional `label` that is echoed back for coordinator bookkeeping.
+
+#### Example (partial success)
+```json
+{
+  "defaults": { "sandbox": "read-only" },
+  "includeHandshake": true,
+  "handshakeMaxEvents": 10,
+  "jobs": [
+    { "prompt": "Summarize the docs/ folder", "label": "docs-summary" },
+    { "prompt": "Find TODOs in src/", "label": "todo-scan" }
+  ]
+}
+```
+
+---
+
 ### `codex_status` - Job Status
 
 Get the current status for a `jobId`.
@@ -234,6 +273,43 @@ Get the current status for a `jobId`.
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `jobId` | string | ✅ | Job identifier returned by `codex_spawn` |
+
+#### Notes
+- A job may be `status: "canceled"` even when `exitCode` is `0` (graceful SIGTERM handling). Treat `status` as the source of truth for cancellation.
+
+---
+
+### `codex_interrupt` - Interrupt (Cancel + Respawn)
+
+Interrupt (rescope) a running subagent by canceling it and respawning a new job with injected continuity context.
+
+This is a deterministic wrapper over `codex_cancel` + `codex_spawn` and does **not** provide true “resume” of a running process.
+
+#### Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `jobId` | string | ✅ | - | Job identifier returned by `codex_spawn` |
+| `newPrompt` | string | ✅ | - | Updated instructions for the respawned job |
+| `waitMs` | number | ❌ | `250` | Bounded wait before respawn (hard-capped) |
+| `includeEventTail` | boolean | ❌ | `true` | If true, inject a bounded tail of prior `message`/`error`/`progress` events |
+| `tailMaxEvents` | number | ❌ | `25` | Max events injected in prompt tail (hard-capped at `25`) |
+| `overrides` | object | ❌ | - | Optional overrides for the respawned job (otherwise inherit original effective settings) |
+
+#### Notes
+- If the target job is not running, the tool refuses and does not respawn.
+- If the job completes naturally while waiting for cancellation, the tool refuses and does not respawn.
+- The respawned prompt always includes a “refresh-before-write” directive.
+
+#### Example
+```json
+{
+  "jobId": "previous-job-id",
+  "newPrompt": "Stop exploring alternatives; implement the smallest safe fix in src/foo.ts.",
+  "waitMs": 500,
+  "tailMaxEvents": 25
+}
+```
 
 ---
 
@@ -259,6 +335,9 @@ Cancel a running job.
 |-----------|------|----------|---------|-------------|
 | `jobId` | string | ✅ | - | Job identifier returned by `codex_spawn` |
 | `force` | boolean | ❌ | `false` | Force kill when supported |
+
+#### Notes
+- Best-effort cancellation (default) sends SIGTERM. The underlying process may exit “cleanly” (`exitCode: 0`) even though the job is considered canceled.
 
 ---
 

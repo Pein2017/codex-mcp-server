@@ -4,21 +4,25 @@ import {
   type ToolHandlerContext,
   type CodexToolArgs,
   type CodexSpawnToolArgs,
+  type CodexSpawnGroupToolArgs,
   type CodexJobIdArgs,
   type CodexResultToolArgs,
   type CodexCancelToolArgs,
   type CodexEventsToolArgs,
   type CodexWaitAnyToolArgs,
+  type CodexInterruptToolArgs,
   type ReviewToolArgs,
   type PingToolArgs,
   SandboxMode,
   CodexToolSchema,
   CodexSpawnToolSchema,
+  CodexSpawnGroupToolSchema,
   CodexJobIdSchema,
   CodexResultToolSchema,
   CodexCancelToolSchema,
   CodexEventsToolSchema,
   CodexWaitAnyToolSchema,
+  CodexInterruptToolSchema,
   ReviewToolSchema,
   PingToolSchema,
   HelpToolSchema,
@@ -32,7 +36,12 @@ import {
 import { ToolExecutionError, ValidationError } from '../errors.js';
 import { executeCommand, executeCommandStreaming } from '../utils/command.js';
 import { ZodError } from 'zod';
-import { CodexJobManager, type CodexJobResult } from '../jobs/job_manager.js';
+import {
+  CodexJobManager,
+  type CodexJobResult,
+  type CodexJobEffectiveOptions,
+  type NormalizedEvent,
+} from '../jobs/job_manager.js';
 
 // Default no-op context for handlers that don't need progress
 const defaultContext: ToolHandlerContext = {
@@ -40,6 +49,65 @@ const defaultContext: ToolHandlerContext = {
 };
 
 const jobManager = new CodexJobManager();
+
+const DEFAULT_INTERRUPT_WAIT_MS = 250;
+const INTERRUPT_WAIT_MS_HARD_CAP = 60 * 1000;
+const DEFAULT_EVENT_TAIL_MAX = 25;
+const EVENT_TAIL_HARD_CAP = 25;
+const DEFAULT_HANDSHAKE_MAX_EVENTS = 25;
+const HANDSHAKE_HARD_CAP = 25;
+
+function clampInt(value: number, min: number, max: number): number {
+  const n = Math.trunc(value);
+  if (!Number.isFinite(n)) return min;
+  return Math.min(max, Math.max(min, n));
+}
+
+function formatEventForPrompt(ev: NormalizedEvent): string {
+  const ts = ev.timestamp;
+  if (ev.type === 'message') {
+    const text = (ev.content as any)?.text;
+    if (typeof text === 'string' && text.trim().length > 0) {
+      return `[${ts}] message: ${text.trim()}`;
+    }
+  }
+
+  if (ev.type === 'error') {
+    const message = (ev.content as any)?.message ?? (ev.content as any)?.error;
+    if (typeof message === 'string' && message.trim().length > 0) {
+      return `[${ts}] error: ${message.trim()}`;
+    }
+  }
+
+  if (ev.type === 'progress') {
+    const kind = (ev.content as any)?.kind;
+    if (typeof kind === 'string' && kind.trim().length > 0) {
+      return `[${ts}] progress: ${kind.trim()}`;
+    }
+  }
+
+  try {
+    return `[${ts}] ${ev.type}: ${JSON.stringify(ev.content)}`;
+  } catch {
+    return `[${ts}] ${ev.type}: ${String(ev.content)}`;
+  }
+}
+
+function buildInterruptPrompt(previousJobId: string, eventsTail: NormalizedEvent[], newPrompt: string): string {
+  const header = `Prior Context (from interrupted job ${previousJobId})`;
+  const formattedEvents =
+    eventsTail.length === 0
+      ? '(no captured events)'
+      : eventsTail.map(formatEventForPrompt).join('\n');
+
+  return (
+    `${header}\n` +
+    `${formattedEvents}\n\n` +
+    `Updated Instructions\n` +
+    `${newPrompt}\n\n` +
+    `IMPORTANT: Refresh-before-write. Re-read relevant files/symbols immediately before editing.`
+  );
+}
 
 function formatMissingFinalMessage(result: CodexJobResult): string {
   const exit =
@@ -335,6 +403,81 @@ export class CodexSpawnToolHandler {
   }
 }
 
+export class CodexSpawnGroupToolHandler {
+  async execute(
+    args: unknown,
+    context: ToolHandlerContext = defaultContext
+  ): Promise<ToolResult> {
+    try {
+      const parsed: CodexSpawnGroupToolArgs = CodexSpawnGroupToolSchema.parse(args);
+
+      const includeHandshake = parsed.includeHandshake ?? false;
+      const handshakeMaxEventsRaw = parsed.handshakeMaxEvents ?? DEFAULT_HANDSHAKE_MAX_EVENTS;
+      const handshakeMaxEvents = clampInt(handshakeMaxEventsRaw, 1, HANDSHAKE_HARD_CAP);
+
+      await context.sendProgress(`Spawning ${parsed.jobs.length} subagent(s)...`, 0);
+
+      const results: Array<Record<string, unknown>> = [];
+
+      for (const job of parsed.jobs) {
+        const label = job.label;
+        const merged = {
+          prompt: job.prompt,
+          model: job.model ?? parsed.defaults?.model,
+          reasoningEffort: job.reasoningEffort ?? parsed.defaults?.reasoningEffort,
+          sandbox: job.sandbox ?? parsed.defaults?.sandbox,
+          fullAuto: job.fullAuto ?? parsed.defaults?.fullAuto,
+          workingDirectory: job.workingDirectory ?? parsed.defaults?.workingDirectory,
+          label,
+        };
+
+        try {
+          const status = jobManager.spawnCodexJob(merged);
+
+          let handshake: unknown | undefined;
+          if (includeHandshake) {
+            const page = jobManager.getEvents(status.jobId, '0', handshakeMaxEvents);
+            handshake = {
+              events: page.events,
+              nextCursor: page.nextCursor,
+              done: page.done,
+            };
+          }
+
+          results.push({
+            jobId: status.jobId,
+            status: status.status,
+            startedAt: status.startedAt,
+            ...(label ? { label } : {}),
+            ...(handshake ? { handshake } : {}),
+          });
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          results.push({
+            error: errorMessage,
+            ...(label ? { label } : {}),
+          });
+        }
+      }
+
+      await context.sendProgress('Spawn group complete', 1);
+
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ results }, null, 2) }],
+      };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new ValidationError(TOOLS.CODEX_SPAWN_GROUP, error.message);
+      }
+      throw new ToolExecutionError(
+        TOOLS.CODEX_SPAWN_GROUP,
+        'Failed to spawn group of codex jobs',
+        error
+      );
+    }
+  }
+}
+
 export class CodexStatusToolHandler {
   async execute(
     args: unknown,
@@ -464,6 +607,155 @@ export class CodexWaitAnyToolHandler {
       throw new ToolExecutionError(
         TOOLS.CODEX_WAIT_ANY,
         'Failed to wait for any codex job to complete',
+        error
+      );
+    }
+  }
+}
+
+export class CodexInterruptToolHandler {
+  async execute(
+    args: unknown,
+    context: ToolHandlerContext = defaultContext
+  ): Promise<ToolResult> {
+    try {
+      const parsed: CodexInterruptToolArgs = CodexInterruptToolSchema.parse(args);
+
+      const includeEventTail = parsed.includeEventTail ?? true;
+      const tailMaxEventsRaw = parsed.tailMaxEvents ?? DEFAULT_EVENT_TAIL_MAX;
+      const tailMaxEvents = clampInt(tailMaxEventsRaw, 0, EVENT_TAIL_HARD_CAP);
+
+      const waitMsRaw = parsed.waitMs ?? DEFAULT_INTERRUPT_WAIT_MS;
+      const waitMs = clampInt(waitMsRaw, 0, INTERRUPT_WAIT_MS_HARD_CAP);
+
+      const previousJobId = parsed.jobId;
+      const status0 = jobManager.getStatus(previousJobId);
+
+      if (status0.status !== 'running') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  previousJobId,
+                  previousStatus: status0.status,
+                  respawned: false,
+                  reason: `Refusing to interrupt: job is not running (status=${status0.status})`,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      await context.sendProgress(`Interrupting job ${previousJobId}...`, 0);
+
+      const spawnMeta = jobManager.getSpawnMetadata(previousJobId);
+
+      const tail = includeEventTail
+        ? jobManager.getEventTail(previousJobId, tailMaxEvents, ['message', 'error', 'progress'])
+        : [];
+
+      const cancelled = jobManager.cancel(previousJobId, false);
+      if (!cancelled.success) {
+        const statusNow = jobManager.getStatus(previousJobId);
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  previousJobId,
+                  previousStatus: statusNow.status,
+                  respawned: false,
+                  reason: `Refusing to interrupt: job is not running (status=${statusNow.status})`,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      if (waitMs > 0) {
+        await jobManager.waitForExit(previousJobId, waitMs);
+      }
+
+      const statusAfter = jobManager.getStatus(previousJobId);
+      if (statusAfter.status === 'done' || statusAfter.status === 'failed') {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(
+                {
+                  previousJobId,
+                  previousStatus: statusAfter.status,
+                  respawned: false,
+                  reason:
+                    'Refusing to respawn: job completed naturally while waiting for cancellation',
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      const effectiveBase = spawnMeta.effective;
+      const overrides = parsed.overrides ?? {};
+
+      const sandbox = overrides.sandbox ?? effectiveBase.sandbox;
+      const useFullAuto =
+        Boolean(overrides.fullAuto ?? effectiveBase.useFullAuto) && !sandbox;
+
+      const effective: CodexJobEffectiveOptions = {
+        model: overrides.model ?? effectiveBase.model,
+        reasoningEffort: overrides.reasoningEffort ?? effectiveBase.reasoningEffort,
+        sandbox,
+        useFullAuto,
+        workingDirectory: overrides.workingDirectory ?? effectiveBase.workingDirectory,
+      };
+
+      const respawnPrompt = buildInterruptPrompt(previousJobId, tail, parsed.newPrompt);
+      const newStatus = jobManager.spawnCodexJobWithEffectiveOptions({
+        prompt: respawnPrompt,
+        effective,
+        label: spawnMeta.label,
+      });
+
+      await context.sendProgress(`Respawned as job ${newStatus.jobId}`, 1);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: JSON.stringify(
+              {
+                previousJobId,
+                previousStatus: statusAfter.status,
+                respawned: true,
+                newJobId: newStatus.jobId,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+        _meta: { previousJobId, newJobId: newStatus.jobId },
+      };
+    } catch (error) {
+      if (error instanceof ZodError) {
+        throw new ValidationError(TOOLS.CODEX_INTERRUPT, error.message);
+      }
+      throw new ToolExecutionError(
+        TOOLS.CODEX_INTERRUPT,
+        'Failed to interrupt codex job',
         error
       );
     }
@@ -679,11 +971,13 @@ const sessionStorage = new InMemorySessionStorage();
 export const toolHandlers = {
   [TOOLS.CODEX]: new CodexToolHandler(sessionStorage),
   [TOOLS.CODEX_SPAWN]: new CodexSpawnToolHandler(),
+  [TOOLS.CODEX_SPAWN_GROUP]: new CodexSpawnGroupToolHandler(),
   [TOOLS.CODEX_STATUS]: new CodexStatusToolHandler(),
   [TOOLS.CODEX_RESULT]: new CodexResultToolHandler(),
   [TOOLS.CODEX_CANCEL]: new CodexCancelToolHandler(),
   [TOOLS.CODEX_EVENTS]: new CodexEventsToolHandler(),
   [TOOLS.CODEX_WAIT_ANY]: new CodexWaitAnyToolHandler(),
+  [TOOLS.CODEX_INTERRUPT]: new CodexInterruptToolHandler(),
   [TOOLS.REVIEW]: new ReviewToolHandler(),
   [TOOLS.PING]: new PingToolHandler(),
   [TOOLS.HELP]: new HelpToolHandler(),

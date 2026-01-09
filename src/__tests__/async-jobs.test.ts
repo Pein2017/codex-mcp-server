@@ -17,11 +17,13 @@ jest.mock('child_process', () => ({
 
 import {
   CodexSpawnToolHandler,
+  CodexSpawnGroupToolHandler,
   CodexStatusToolHandler,
   CodexResultToolHandler,
   CodexCancelToolHandler,
   CodexEventsToolHandler,
   CodexWaitAnyToolHandler,
+  CodexInterruptToolHandler,
 } from '../tools/handlers.js';
 
 function makeMockChildProcess() {
@@ -200,5 +202,172 @@ describe('Async subagent jobs', () => {
         delete process.env.CODEX_MCP_DEFAULT_SANDBOX;
       }
     }
+  });
+
+  test('codex_spawn_group returns partial success (cap) and optional handshake events', async () => {
+    const childA = makeMockChildProcess();
+    spawnMock.mockReturnValueOnce(childA);
+
+    const previousMaxJobs = process.env.CODEX_MCP_MAX_JOBS;
+    process.env.CODEX_MCP_MAX_JOBS = '1';
+
+    try {
+      const spawnGroupHandler = new CodexSpawnGroupToolHandler();
+
+      const res = await spawnGroupHandler.execute({
+        defaults: {
+          sandbox: 'read-only',
+          workingDirectory: '/data/Qwen3-VL',
+        },
+        includeHandshake: true,
+        handshakeMaxEvents: 1,
+        jobs: [
+          { prompt: 'Job A', label: 'a' },
+          { prompt: 'Job B', label: 'b' },
+        ],
+      });
+
+      const out = JSON.parse(res.content[0].text) as {
+        results: Array<{ jobId?: string; error?: string; label?: string; handshake?: any }>;
+      };
+      expect(out.results).toHaveLength(2);
+
+      expect(typeof out.results[0]?.jobId).toBe('string');
+      expect(out.results[0]?.label).toBe('a');
+      expect(out.results[0]?.handshake?.events?.length).toBe(1);
+      expect(out.results[0]?.handshake?.events?.[0]?.type).toBe('progress');
+
+      expect(typeof out.results[1]?.error).toBe('string');
+      expect(out.results[1]?.error?.toLowerCase()).toContain('too many concurrent jobs');
+      expect(out.results[1]?.label).toBe('b');
+
+      // Ensure defaults were applied to spawned job A.
+      const argsA = spawnMock.mock.calls[0]?.[1] as string[] | undefined;
+      expect(Array.isArray(argsA)).toBe(true);
+      expect(argsA).toContain('--sandbox');
+      expect(argsA).toContain('read-only');
+      expect(argsA).toContain('-C');
+      expect(argsA).toContain('/data/Qwen3-VL');
+
+      // Cleanup: finish job A so it doesn't leak running state into other tests.
+      childA.emit('close', 0);
+    } finally {
+      if (previousMaxJobs !== undefined) {
+        process.env.CODEX_MCP_MAX_JOBS = previousMaxJobs;
+      } else {
+        delete process.env.CODEX_MCP_MAX_JOBS;
+      }
+    }
+  });
+
+  test('codex_interrupt cancels + respawns with inherited settings and injected event tail', async () => {
+    const childA = makeMockChildProcess();
+    const childB = makeMockChildProcess();
+    spawnMock.mockReturnValueOnce(childA).mockReturnValueOnce(childB);
+
+    const spawnHandler = new CodexSpawnToolHandler();
+    const interruptHandler = new CodexInterruptToolHandler();
+
+    const spawnRes = await spawnHandler.execute({
+      prompt: 'Original task',
+      model: 'gpt-4o',
+      reasoningEffort: 'high',
+      sandbox: 'read-only',
+      workingDirectory: '/data/Qwen3-VL',
+    });
+
+    const jobA = JSON.parse(spawnRes.content[0].text) as { jobId: string };
+
+    childA.stdout.emit(
+      'data',
+      Buffer.from(
+        JSON.stringify({
+          type: 'item.completed',
+          item: { id: '1', type: 'agent_message', text: 'working on it' },
+        }) + '\n'
+      )
+    );
+
+    // Ensure the interrupt wait sees the job exit as canceled.
+    setTimeout(() => childA.emit('close', 137), 0);
+
+    const interruptRes = await interruptHandler.execute({
+      jobId: jobA.jobId,
+      newPrompt: 'New scope: focus only on docs',
+      waitMs: 1000,
+      tailMaxEvents: 5,
+    });
+
+    const out = JSON.parse(interruptRes.content[0].text) as {
+      respawned: boolean;
+      newJobId?: string;
+    };
+    expect(out.respawned).toBe(true);
+    expect(typeof out.newJobId).toBe('string');
+    expect(childA.kill).toHaveBeenCalled();
+
+    // Second spawn should inherit model/reasoning/sandbox/workingDirectory by default.
+    const argsB = spawnMock.mock.calls[1]?.[1] as string[] | undefined;
+    expect(Array.isArray(argsB)).toBe(true);
+    expect(argsB).toContain('--model');
+    expect(argsB).toContain('gpt-4o');
+    expect(argsB).toContain('--sandbox');
+    expect(argsB).toContain('read-only');
+    expect(argsB).toContain('-C');
+    expect(argsB).toContain('/data/Qwen3-VL');
+
+    const promptB = argsB?.[argsB.length - 1];
+    expect(typeof promptB).toBe('string');
+    expect(promptB).toContain(`Prior Context (from interrupted job ${jobA.jobId})`);
+    expect(promptB).toContain('working on it');
+    expect(promptB).toContain('Updated Instructions');
+    expect(promptB).toContain('New scope: focus only on docs');
+    expect(promptB).toContain('IMPORTANT: Refresh-before-write');
+
+    // Cleanup: finish respawned job B.
+    childB.emit('close', 0);
+  });
+
+  test('codex_interrupt refuses respawn if job completes naturally during wait', async () => {
+    const childA = makeMockChildProcess();
+    spawnMock.mockReturnValueOnce(childA);
+
+    const spawnHandler = new CodexSpawnToolHandler();
+    const interruptHandler = new CodexInterruptToolHandler();
+
+    const spawnRes = await spawnHandler.execute({
+      prompt: 'Short task',
+      sandbox: 'read-only',
+    });
+    const jobA = JSON.parse(spawnRes.content[0].text) as { jobId: string };
+
+    // Natural completion (turn.completed + exit 0) racing with interrupt cancellation.
+    // We include a `turn.completed` event so the job manager can distinguish "completed turn"
+    // from a graceful SIGTERM exit.
+    setTimeout(() => {
+      childA.stdout.emit(
+        'data',
+        Buffer.from(JSON.stringify({ type: 'turn.completed', usage: {} }) + '\n')
+      );
+      childA.emit('close', 0);
+    }, 0);
+
+    const interruptRes = await interruptHandler.execute({
+      jobId: jobA.jobId,
+      newPrompt: 'New scope',
+      waitMs: 1000,
+    });
+
+    const out = JSON.parse(interruptRes.content[0].text) as {
+      respawned: boolean;
+      previousStatus: string;
+      reason?: string;
+    };
+    expect(out.respawned).toBe(false);
+    expect(out.previousStatus).toBe('done');
+    expect(out.reason?.toLowerCase()).toContain('completed naturally');
+
+    // Only the original job was spawned; no respawn should happen.
+    expect(spawnMock).toHaveBeenCalledTimes(1);
   });
 });

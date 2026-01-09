@@ -108,6 +108,112 @@ export const toolDefinitions: ToolDefinition[] = [
     },
   },
   {
+    name: TOOLS.CODEX_SPAWN_GROUP,
+    description:
+      'Spawn multiple async Codex subagent jobs in one call (deterministic wrapper over multiple codex_spawn calls)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        defaults: {
+          type: 'object',
+          description:
+            'Optional shared defaults applied only when a per-job field is omitted',
+          properties: {
+            model: {
+              type: 'string',
+              description:
+                'Optional model override. If omitted, Codex CLI resolves its default from ~/.codex/config.toml',
+            },
+            reasoningEffort: {
+              type: 'string',
+              enum: ['low', 'medium', 'high'],
+              description:
+                'Optional reasoning effort override. If omitted, Codex CLI uses config.toml default.',
+            },
+            sandbox: {
+              type: 'string',
+              enum: ['read-only', 'workspace-write', 'danger-full-access'],
+              description:
+                'Optional sandbox override. If omitted, uses CODEX_MCP_DEFAULT_SANDBOX when set.',
+            },
+            fullAuto: {
+              type: 'boolean',
+              description:
+                'Enable full-auto mode for the spawned job (equivalent to -a on-request --sandbox workspace-write). Ignored if sandbox is explicitly set.',
+            },
+            workingDirectory: {
+              type: 'string',
+              description: 'Working directory for the job (passed via -C flag)',
+            },
+          },
+        },
+        jobs: {
+          type: 'array',
+          description: 'List of job spawn requests (partial success per entry)',
+          items: {
+            type: 'object',
+            properties: {
+              prompt: {
+                type: 'string',
+                description: 'The coding task, question, or analysis request',
+              },
+              model: {
+                type: 'string',
+                description:
+                  'Optional model override. If omitted, Codex CLI resolves its default from ~/.codex/config.toml',
+              },
+              reasoningEffort: {
+                type: 'string',
+                enum: ['low', 'medium', 'high'],
+                description:
+                  'Optional reasoning effort override. If omitted, Codex CLI uses config.toml default.',
+              },
+              sandbox: {
+                type: 'string',
+                enum: ['read-only', 'workspace-write', 'danger-full-access'],
+                description:
+                  'Optional sandbox override. If omitted, uses CODEX_MCP_DEFAULT_SANDBOX when set.',
+              },
+              fullAuto: {
+                type: 'boolean',
+                description:
+                  'Enable full-auto mode for the spawned job (equivalent to -a on-request --sandbox workspace-write). Ignored if sandbox is explicitly set.',
+              },
+              workingDirectory: {
+                type: 'string',
+                description: 'Working directory for the job (passed via -C flag)',
+              },
+              label: {
+                type: 'string',
+                description:
+                  'Optional coordinator label (server stores and echoes it; no effect on execution)',
+              },
+            },
+            required: ['prompt'],
+          },
+        },
+        includeHandshake: {
+          type: 'boolean',
+          description:
+            'If true, include a small initial events page for each successfully spawned job',
+        },
+        handshakeMaxEvents: {
+          type: 'number',
+          description:
+            'Max events to return in handshake per job (default 25, hard-capped)',
+        },
+      },
+      required: ['jobs'],
+    },
+    annotations: {
+      title: 'Spawn Group Subagents',
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+  {
     name: TOOLS.CODEX_STATUS,
     description: 'Get status of a spawned Codex subagent job',
     inputSchema: {
@@ -219,6 +325,74 @@ export const toolDefinitions: ToolDefinition[] = [
       destructiveHint: false,
       idempotentHint: false,
       openWorldHint: false,
+    },
+  },
+  {
+    name: TOOLS.CODEX_INTERRUPT,
+    description:
+      'Interrupt a running Codex subagent (cancel + bounded wait + respawn with injected event tail; deterministic wrapper)',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        jobId: { type: 'string', description: 'Job identifier returned by codex_spawn' },
+        newPrompt: {
+          type: 'string',
+          description: 'Updated instructions for the respawned job',
+        },
+        waitMs: {
+          type: 'number',
+          description: 'Max time to wait for cancellation before respawning (default 250, hard-capped)',
+        },
+        includeEventTail: {
+          type: 'boolean',
+          description: 'If true, inject a bounded tail of prior message/error/progress events (default true)',
+        },
+        tailMaxEvents: {
+          type: 'number',
+          description: 'Max events to inject in prompt tail (default 25, hard-capped)',
+        },
+        overrides: {
+          type: 'object',
+          description:
+            'Optional overrides for the respawned job. When omitted, original effective settings are inherited.',
+          properties: {
+            model: {
+              type: 'string',
+              description:
+                'Optional model override. If omitted, Codex CLI resolves its default from ~/.codex/config.toml',
+            },
+            reasoningEffort: {
+              type: 'string',
+              enum: ['low', 'medium', 'high'],
+              description:
+                'Optional reasoning effort override. If omitted, Codex CLI uses config.toml default.',
+            },
+            sandbox: {
+              type: 'string',
+              enum: ['read-only', 'workspace-write', 'danger-full-access'],
+              description:
+                'Optional sandbox override. If omitted, uses original effective sandbox.',
+            },
+            fullAuto: {
+              type: 'boolean',
+              description:
+                'Enable full-auto mode for the respawned job (ignored if sandbox is explicit).',
+            },
+            workingDirectory: {
+              type: 'string',
+              description: 'Working directory for the job (passed via -C flag)',
+            },
+          },
+        },
+      },
+      required: ['jobId', 'newPrompt'],
+    },
+    annotations: {
+      title: 'Interrupt Subagent',
+      readOnlyHint: false,
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: true,
     },
   },
   {

@@ -25,11 +25,13 @@ import {
   toolHandlers,
   CodexToolHandler,
   CodexSpawnToolHandler,
+  CodexSpawnGroupToolHandler,
   CodexStatusToolHandler,
   CodexResultToolHandler,
   CodexCancelToolHandler,
   CodexEventsToolHandler,
   CodexWaitAnyToolHandler,
+  CodexInterruptToolHandler,
   ReviewToolHandler,
   PingToolHandler,
   HelpToolHandler,
@@ -48,16 +50,18 @@ describe('Codex MCP Server', () => {
 
   describe('Tool Definitions', () => {
     test('should have all required tools defined', () => {
-      expect(toolDefinitions).toHaveLength(11);
+      expect(toolDefinitions).toHaveLength(13);
 
       const toolNames = toolDefinitions.map((tool) => tool.name);
       expect(toolNames).toContain(TOOLS.CODEX);
       expect(toolNames).toContain(TOOLS.CODEX_SPAWN);
+      expect(toolNames).toContain(TOOLS.CODEX_SPAWN_GROUP);
       expect(toolNames).toContain(TOOLS.CODEX_STATUS);
       expect(toolNames).toContain(TOOLS.CODEX_RESULT);
       expect(toolNames).toContain(TOOLS.CODEX_CANCEL);
       expect(toolNames).toContain(TOOLS.CODEX_EVENTS);
       expect(toolNames).toContain(TOOLS.CODEX_WAIT_ANY);
+      expect(toolNames).toContain(TOOLS.CODEX_INTERRUPT);
       expect(toolNames).toContain(TOOLS.REVIEW);
       expect(toolNames).toContain(TOOLS.PING);
       expect(toolNames).toContain(TOOLS.HELP);
@@ -92,11 +96,13 @@ describe('Codex MCP Server', () => {
     test('should have handlers for all tools', () => {
       expect(toolHandlers[TOOLS.CODEX]).toBeInstanceOf(CodexToolHandler);
       expect(toolHandlers[TOOLS.CODEX_SPAWN]).toBeInstanceOf(CodexSpawnToolHandler);
+      expect(toolHandlers[TOOLS.CODEX_SPAWN_GROUP]).toBeInstanceOf(CodexSpawnGroupToolHandler);
       expect(toolHandlers[TOOLS.CODEX_STATUS]).toBeInstanceOf(CodexStatusToolHandler);
       expect(toolHandlers[TOOLS.CODEX_RESULT]).toBeInstanceOf(CodexResultToolHandler);
       expect(toolHandlers[TOOLS.CODEX_CANCEL]).toBeInstanceOf(CodexCancelToolHandler);
       expect(toolHandlers[TOOLS.CODEX_EVENTS]).toBeInstanceOf(CodexEventsToolHandler);
       expect(toolHandlers[TOOLS.CODEX_WAIT_ANY]).toBeInstanceOf(CodexWaitAnyToolHandler);
+      expect(toolHandlers[TOOLS.CODEX_INTERRUPT]).toBeInstanceOf(CodexInterruptToolHandler);
       expect(toolHandlers[TOOLS.REVIEW]).toBeInstanceOf(ReviewToolHandler);
       expect(toolHandlers[TOOLS.PING]).toBeInstanceOf(PingToolHandler);
       expect(toolHandlers[TOOLS.HELP]).toBeInstanceOf(HelpToolHandler);
